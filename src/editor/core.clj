@@ -9,104 +9,77 @@
    ;; [java.awt Color])
   (:use clojure.pprint)
   (:use seesaw.core)
+  (:use seesaw.dev)
   )
 
-;; (gen-class
-;;  :extends javax.swing.JPanel
-;;  :name editor.core.BackgroundPanel
-;;  ;; :main false
-;;  :exposes-methods {paintComponent parentPaintComponent}
-;;  :prefix "background-panel-")
-  
-
-
-;; (defn create-and-show-gui
-;;   []
-
-;;   (let [my-frame (doto (JFrame. "My Frame")
-;;                    (.setDefaultCloseOperation JFrame/EXIT_ON_CLOSE))
-;;         my-label (JLabel. "Hello UI")
-;;         content-pane (.getContentPane  my-frame)]
-
-;;     (.add content-pane my-label)
-;;     (.pack my-frame)
-;;     (.setVisible my-frame true)))
-
-
+;; show-events
+;; show-options
 ;; for the repl:
 ;; (use 'editor.core :reload-all)
 ;; https://docs.oracle.com/javase/tutorial/uiswing/misc/trans_shaped_windows.html
 
-(defn add-behaviors!
+(defn make-transparent!
   [root]
 
-  ;; (root .se,)
+  (doto root
+      (.setUndecorated true)
+      (.setBackground (Color. 0 0xff 0 50)))
 
-  ;; (let [pane (.setContentPane (new editor.code.PicturePanel))])
-  ;; (pprint root)
-  
-  (let [pane (.getContentPane root)]
-    (doto pane
-      (.setOpaque true)
-      (.setBackground (new java.awt.Color 0 0 0xff 0x7f))
-      ;; (.setBackground pane (new java.awt.Color 0 0 0xff 0xff))
-      )
-    )
-  ;; (make-transparent! root)
-  ;; (pprint )
+  ;; (let [pane (.getContentPane root)]
+  ;;   (doto pane
+  ;;     (.setOpaque true)
+  ;;     (.setBackground (new java.awt.Color 0 0 0xff 0x7f))
+  ;;     )
+  ;;   )
 
   root)
 
+(defn on-test-event [e]
+  (let [key (.getKeyChar e)
+        extendedCode (.getExtendedKeyCode e)
+        modifiers (.getModifiers e)]
+    (println "key-down:" key "-" extendedCode ";" modifiers)
+    (when (and (= extendedCode (int \Q)) ;;(= key \q)
+               (= modifiers 2))
+      (println "quit")
+      )
+    ))
+
+(defn add-keys! [root]
+  (let [a-test (action :handler on-test-event :key "q" :name "Test")
+        ])
+  root)
+
 ;; (def uberframe (atom nil))
-
-
-(defn uberpaint [this g]
-  (println "g" g)
-  ;; (println "c" this)
-  ;; (let [g2d])
-  )
+;; deref/@
 
 (defn gui []
-  ;; (swap! uberframe
-  ;; (JFrame/setDefaultLookAndFeelDecorated true)
+  (def [uberframe
+        (frame :title "Editor"
+               ;; :class
+               :content (border-panel
+                         :north "oida"
+                         :south "bre"
+                         ;; :background (Color. 0xff 0 0 0x2d)
+                         )
+               :listen [:key-pressed #'on-test-event ;; (fn [e] (println "pressed" e))
+                        ]
+               ;; :background :blue
+               :on-close :dispose ;;:exit
+               )]
 
-  ;; (def content (proxy [JPanel] []
-  ;;                (paintComponent [g];; (println "kurac"))
-  ;;                  )
-                 ;; ))
-  ;; (doto content
-  ;;   ;; (.setOpaque false)
-  ;;   (.setBackground (Color. 0 0 0xff 0x7f))
-  ;;   )
-  
-  (def uberframe
-    (frame :title "Re Editor"
-           ;; :class
-           :content ;content
-           (border-panel
-                     :north "oi"
-                     :south "daz"
-                     :background (Color. 0xff 0 0 0x2d)
-                     )
-           ;; :background :blue
-           :on-close :dispose ;;:exit
-           ))
-  (doto uberframe
-    (.setUndecorated true)
-    (.setBackground (Color. 0 0 0 0)))
-  
-  ;; (SwingUtilities/invokeLater create-and-show-gui)
-  (-> uberframe
-      add-behaviors!
-      pack!
-      show!)
-  )
+    (-> uberframe
+        make-transparent!
+
+        ;; add-keys!
+        
+        pack!
+        show!)))
 
 (defn oida []
   (println "noida"))
 
 (defn -main [& args]
-  
   ;; (oida)
   (load-file "src/editor/test.clj")
   (oida)
@@ -114,6 +87,9 @@
   ;; (let [thing (new editor.core.PicturePanel)])
   
   (invoke-later
-   (gui))
-  ;; (println "Hello, World!")
+   (gui)
+
+   (println "Koniec!")
+   )
+  ;; (println uberframe)
   )
