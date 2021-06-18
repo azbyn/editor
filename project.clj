@@ -7,5 +7,7 @@
                  [seesaw "1.5.0"]]
   :main ^:skip-aot editor.core
   :target-path "target/%s"
+  :java-source-paths ["src/java"]
+  ;; :javac-options     ["-target" "1.6" "-source" "1.6"
   :profiles {:uberjar {:aot :all
                        :jvm-opts ["-Dclojure.compiler.direct-linking=true"]}})
