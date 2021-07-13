@@ -3,51 +3,40 @@
 
   (:import
    [javax.swing SwingUtilities JFrame JLabel JPanel]
-   [java.awt GraphicsEnvironment GraphicsDevice Color Font]
-   [java.awt.event KeyEvent]
+   [java.awt GraphicsEnvironment GraphicsDevice Color Font Canvas]
+   [java.awt.event
+    KeyEvent KeyListener
+    ComponentListener ComponentEvent]
    ;; [javla LineNumberingTextArea]
    )
   (:require
-   [seesaw.core :as ss]
    [editor.utils :refer [case-with-eval case-enum]]
    [editor.text-buffer :refer :all]
+   [editor.state :refer :all]
+
+   [editor.buffer :refer :all]
+
+
+   ;;for ease of replness
+   ;; [editor.graphics :refer :all]
    ;; [seesaw.color]
    )
-  
+
   ;; (:import
    ;; [java.awt Color])
   (:use clojure.pprint)
   (:use seesaw.color)
   (:use seesaw.dev)
+  (:use seesaw.font)
+  (:use seesaw.core)
   )
 
-(use 'seesaw.font)
-(use 'seesaw.core)
-
-;; show-events
-;; show-options
-;; for the repl:
-;; (use 'editor.core :reload-all)
 
 ;; https://cemerick.com/blog/2011/07/05/flowchart-for-choosing-the-right-clojure-type-definition-form.html
 
 
-
-(def the-gui (atom nil))
-(def the-state (atom nil))
-
-(defn get-gui
-  "Get the current gui (JFrame)"
-  []
-  @the-gui)
-
-(defn get-current-buffer []
-  (:current-buffer @the-state))
-
 ;; (defn the-gui-get-current-canvas []
 ;;   (:current-canvas @the-state))
-
-
 
 
 (defn init-state! []
@@ -62,21 +51,6 @@
                      }))
 
 ;; https://github.com/clj-commons/seesaw/tree/develop/test/seesaw/test/examples
-
-
-
-(defn paint
-  "The default canvas paint function
-  
-  we should pass an index or smth to differentiate between canvases
-  or somehow deduce what window this is (with :id perhaps (on canvas))
-  "
-  [canvas g]
-
-  (draw-text-buffer canvas g (get-current-buffer)))
-
-
-
 ;; https://docs.oracle.com/javase/tutorial/uiswing/misc/trans_shaped_windows.html
 
 (defn make-transparent!
@@ -87,128 +61,126 @@
       (.setBackground (color 0 0xff 0 50)))
   root)
 
-(defn quit! []
-  (dispose! (get-gui)))
 
-(defn move-cursor! [dx]
-  ;; (let [pane (get-current-pane)
-  ;;       pos (.getCaretPosition pane)]
-  ;;   (.setCaretPosition pane (+ dx pos))
-  ;;   )
-  ;;TODO
-  nil
-  )
-
-(defn forward-char! []
-  (move-cursor! 1)
-  (println "forward-char")
-  )
-
-(defn backward-char! []
-  (move-cursor! -1)
-  (println "background-char"))
-
+;;TODO extended modifier or whatever
 (def mod-ctrl 2)
 (def mod-shift 1)
 
+(defn solve-key
+  "Returns the function that should be called for the keypress.
+  Returns `nil` if no keybinding is assigned."
+  [modifiers code]
+  (if (= modifiers mod-ctrl)
+    (case-with-eval code
+                    KeyEvent/VK_Q #'quit-gui!
+                    KeyEvent/VK_F #'forward-char
+                    KeyEvent/VK_A #'backward-char
+                    nil)
+    (case-with-eval code
+                    KeyEvent/VK_RIGHT #'forward-char
+                    KeyEvent/VK_LEFT #'backward-char
+
+                    KeyEvent/VK_UP #'previous-line
+                    KeyEvent/VK_DOWN #'next-line
+
+                    KeyEvent/VK_END #'move-end-of-line
+                    KeyEvent/VK_HOME #'move-beginning-of-line
+                    nil)
+    ))
+
 (defn on-key-pressed [e]
   (let [key (.getKeyChar e)
-        extendedCode (.getExtendedKeyCode e)
+        extended-code (.getExtendedKeyCode e)
         modifiers (.getModifiers e)]
     ;; (println e)
-    (println "key-down:" key "-" extendedCode ";" modifiers)
-    (when (= modifiers mod-ctrl)
-      (case-with-eval extendedCode
-        KeyEvent/VK_Q (quit!)
-        KeyEvent/VK_F (forward-char!)
-        KeyEvent/VK_A (backward-char!)
-        ;; (println "other key" extendedCode)
-        nil))
-    ;; (when (and (= extendedCode (int \Q)) ;;(= key \q)
-    ;;            (= modifiers 2))
-    ;;   (dispose! (get-gui))
-    ;;   ;; (println "quit")
-    ;;   )
+    (println "key-down:" key "-" extended-code ";" modifiers)
+    (if-let [fun (solve-key modifiers extended-code)]
+      (call-interactively fun)
     )
-  true)
+  true))
 
 
-(defn create-editor-panel []
-  (canvas :paint paint
-          :background (color 0 0 0 0))
-  ;; (ss/scrollable
-  ;; (LineNumberingTextArea. ;; JTextLineNumber.
-   ;; (editor-pane
-   ;; ;; (text
-   ;;  ;; :editable? true
-   ;;  ;; :content-type "text/"
-   ;;  :text "Привіт"
-   ;;  ;; :editable? false
-   ;;  ;; :multi-line? true
-   ;;  ;; :tab-size 4
-
-   ;;  :font (font "DejaVu Sans Mono 20"
-   ;;              ;; :style #{:bold}
-   ;;              )
-
-   ;;  :listen [;;:key-typed #'on-key-pressed
-   ;;           :key-pressed #'on-key-pressed]
-   ;;  :background "#1D1F21"
-   ;;  :foreground "#E0E0E0"
-   ;;  :caret-color "#FBA922"
-   ;;  :selection-color :blue;; (color 0x70 0x70 0x70 20)
-   ;;  ;; ;; :tip "add salt to pasta while boiling"
-   ;;  ;; ;; :background (color 255 0 0 25)
-   ;;  :border 5
-   ;;  )
-  ;; )
-   )
-
-(defn create-frame-contents []
-  (let [value (ss/border-panel
-               :center (create-editor-panel)
+(defn create-frame-contents [current-buffer]
+  (let [value (border-panel
+               :center (-> current-buffer :component)
                :background "#ff0000"
                :border 5
                )]
-    (swap! the-state assoc :current-page value)
+    ;; (swap! the-state assoc :current-pane value)
     value))
 
-;; (swap! uses a function)
-(defn init-gui! []
-  (reset! the-gui
-          (frame :title "Editor"
-                 ;; :class
-                 :content (create-frame-contents)
-                 ;; :listen [:key-pressed #'on-key-pressed]
-                 ;; :background :blue
-                 :on-close :dispose ;;:exit
-                 :width 800
-                 :height 600
-                 ))
+;;TODO call post- show for new stuff
+(defn post-show!
+  [gui state]
 
+  (let [current-buffer (get-current-buffer)]
+    (doto (:component current-buffer)
+
+      (.addKeyListener (proxy [KeyListener] []
+                         (keyPressed [e] (on-key-pressed e))
+                         (keyReleased [e])
+                         (keyTyped [e])))
+      (.addComponentListener (proxy [ComponentListener] []
+                               (componentShown [e]
+                                 (repaint-buffer! current-buffer)
+                                 (println "comp shown")
+                                 )
+                               (componentResized [e]
+                                 (repaint-buffer! current-buffer)
+                                 (println "comp resized")
+                                 )
+                               (componentMoved [e]
+                                 (repaint-buffer! current-buffer)
+                                 (println "comp moved")
+                                 )
+                               )))
+
+    (on-component-added! current-buffer)
+
+    (repaint-buffer! current-buffer)
+    (println "-added component")
+    )
+
+    gui)
+
+;; (swap! uses a function)
+(defn init-gui! [state]
+  (let [content (create-frame-contents (:current-buffer state))]
+    (reset! the-gui
+            (frame :title "Editor"
+                   ;; :class
+                   :content content
+                   :listen [:key-pressed #'on-key-pressed
+                            ;; only resized and shown?
+                            :component-resized (fn [e]
+                                                 (println "cs!")
+                                                 (repaint-buffer!))
+                            ]
+                   ;; :background :blue
+                   :on-close :dispose ;;:exit
+                   :width 800
+                   :height 600
+                   ))
     (-> (get-gui)
         make-transparent!
 
         ;; add-keys!
-        
-        pack!
-        show!))
 
-(defn oida []
-  (println "noida"))
+        pack!
+        show!
+        (post-show! state))))
+
+
+
 
 (defn -main [& args]
   (init-state!)
-  ;; (oida)
-  (load-file "src/editor/test.clj")
-  (oida)
+  ;;(load-file "src/editor/test.clj")
 
   ;; (let [thing (new editor.core.PicturePanel)])
-  
-  (invoke-later
-   (init-gui!)
 
-   (println "Koniec!")
+  (invoke-later
+   (init-gui! @the-state)
+   ;; (repaint-buffer!)
    )
-  ;; (println uberframe)
   )

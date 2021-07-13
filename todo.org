@@ -1,0 +1,5 @@
+EventQueue.infokeLater() for thread stuff
+https://stackoverflow.com/questions/1796578/which-swing-component-methods-are-thread-safe#1796687
+also, undomanager exists
+
+
