@@ -12,6 +12,7 @@
     [editor.graphics-utils :refer :all]
     [editor.utils :refer :all]
     [editor.buffer :refer :all]
+    [clojure.test :refer :all]
     )
   (:import [java.awt Graphics FontMetrics Canvas]
            [java.awt.image BufferStrategy]))
@@ -26,7 +27,7 @@
 
 (defn move-cursor-absolute-unsafe
   "Move the cursor to `x`, `y`. Unsafe because it doesn't check the bounds.
-  Only for internal usage."
+  For internal usage."
   ([buffer x y] (move-cursor-absolute-unsafe buffer (->Pos x y)))
   ([buffer new-pos]
    (assoc buffer :cursor-pos new-pos)))
@@ -133,23 +134,257 @@
   ([buffer] (move-cursor-relative-y buffer -1))
   ([buffer n] (move-cursor-relative-y buffer (- n))))
 
+
+(defn-buffer clamp-cursor-x
+  "Correct for invalid positions of `x` in the `:cursor-pos`.
+  
+  For internal usage.
+  While moving the cursor might be in invalid positions
+  (moving up from a long line to a shorter one), so this fixes it."
+
+  [buffer]
+  (let [lines (:lines buffer)
+        y (:y (:cursor-pos buffer))]
+    (if (>= y (count lines))
+      buffer
+      (update-in buffer [:cursor-pos :x] #(min % (count (get lines y))))
+      )))
+
+(with-test #'clamp-cursor-x
+  (letfn [(impl [lines pos]
+            (-> {:lines lines, :cursor-pos pos}
+                clamp-cursor-x
+                :cursor-pos))]
+    
+    (is= (impl ["abc"] (->Pos 0 0)) (->Pos 0 0))
+    (is= (impl ["abc"] (->Pos 3 0)) (->Pos 3 0))
+    (is= (impl ["abc"] (->Pos 4 0)) (->Pos 3 0))
+    (is= (impl [""] (->Pos 4 0)) (->Pos 0 0))
+    ;; (is= (impl [""] (->Pos 4 1)) (->Pos 0 0))
+    ))
+
+
+
+;; TODO use this in forward-char and stuff?
+;; (defn get-current-cursor-pos
+;;   "Returns the cursor position correcting invalid positions."
+;;   ([]
+;;    (get-current-cursor-pos (get-current-buffer)))
+
+;;   ([buffer]
+;;    (let [lines (:lines buffer)
+;;          pos (:cursor-pos buffer)
+;;          y (:y pos)]
+;;      (if (>= y (count lines))
+;;        (->Pos 0 (count lines))
+;;        (->Pos (min (:x pos) (count (get lines y))) y)
+;;        ))))
+
+;; TODO test
+
+;; TODO integration test (ie up down and stuff)
+
 (defn-buffer insert-newline
   "Insert a new line
-   `pos` is `:cursor-pos` if unspecified."
+   If `pos` is unspecified, the newline is inserted at `:cursor-pos`
+  and the cursor is moved right."
   ([buffer]
-   (insert-newline (:cursor-pos buffer)))
+   (t-> buffer
+        clamp-cursor-x
+        #(insert-newline % (:cursor-pos %))
+        forward-char))
   ([buffer pos]
-  ;;TODO
-  buffer)
-  )
+   (let [lines (:lines buffer)
+         ln (get lines (:y pos))]
+     (assoc buffer :lines
+            (if ln
+              (vec (concat
+                    (subvec lines 0 (:y pos))
+                    [(subs ln 0 (:x pos))
+                     (subs ln (:x pos))]
+                    (subvec lines (inc (:y pos)))
+                    ))
+              (conj lines "")
+              )))))
+
+
+
+(with-test #'insert-newline
+  (letfn [(insert-test [lines pos]
+            (-> {:lines lines}
+                (insert-newline pos)
+                :lines))]
+
+    (is= (insert-test ["abc"] (->Pos 0 0)) ["" "abc"])
+    (is= (insert-test ["abc"] (->Pos 0 1)) ["abc" ""])
+    (is= (insert-test ["abc" "de"] (->Pos 0 0)) ["" "abc" "de"])
+    
+    (is= (insert-test ["abc"] (->Pos 3 0)) ["abc" ""])
+    (is= (insert-test ["abc" "de"] (->Pos 3 0)) ["abc" "" "de"])
+
+    (is= (insert-test ["abc"] (->Pos 2 0)) ["ab" "c"])
+    (is= (insert-test ["abc" "de"] (->Pos 2 0)) ["ab" "c" "de"])
+
+    (is= (insert-test [""] (->Pos 0 0)) ["" ""])
+    (is= (insert-test [] (->Pos 0 0)) [""])
+    ))
+
+
+
 (defn-buffer insert-char
   "Insert the character `char` at `pos`.
-  `pos` is `:cursor-pos` if unspecified."
+  If `pos` is unspecified, the character is inserted at `:cursor-pos`
+  and the cursor is moved right."
   ([buffer char]
-   (insert-char char (:cursor-pos buffer)))
+   (t-> buffer
+       clamp-cursor-x
+       #(insert-char % char (:cursor-pos %))
+       forward-char
+       ))
   ([buffer char pos]
-   ;;TODO
-   buffer))
+   (if (= char \newline)
+     (insert-newline buffer pos)
+
+     (update-in buffer [:lines (:y pos)]
+                (fn [line]
+                  (if (empty? line)
+                    (str char)
+                    (str-insert line char (:x pos)))))
+
+     )))
+
+;; TODO MOVE?
+(with-test #'insert-char
+  (letfn [(insert-test [lines chr pos]
+            (-> {:lines lines}
+                (insert-char chr pos)
+                :lines))
+          (insert-test-2 [lines chr pos]
+            (-> {:lines lines, :cursor-pos pos}
+                (insert-char chr)))
+          ]
+    
+    (is= (insert-test ["abc"] \o (->Pos 0 0)) ["oabc"])
+    (is= (insert-test ["abc"] \d (->Pos 3 0)) ["abcd"])
+    (is= (insert-test ["abc"] \newline (->Pos 3 0)) ["abc" ""])
+    (is= (insert-test [""] \a (->Pos 0 0)) ["a"])
+    (is= (insert-test [] \a (->Pos 0 0)) ["a"])
+
+
+    (is= (insert-test-2 ["abc"] \o (->Pos 0 0)) {:lines ["oabc"],
+                                                 :cursor-pos (->Pos 1 0)})
+    ))
+
+
+(defn-buffer delete-forward
+  "Delete the character at `pos`.
+  If `pos` is unspecified, the character at `:cursor-pos` is removed."
+  ([buffer]
+   (t-> buffer
+        clamp-cursor-x
+        #(delete-forward % (:cursor-pos %))))
+  ([buffer pos]
+   (let [lines (:lines buffer)
+         y (:y pos)]
+     (if (>= y (count lines))
+       buffer
+       (assoc buffer :lines
+              (let [ln (get lines y)
+                    x (:x pos)]
+                (cond
+                  (< x (count ln)) (assoc lines y (str-remove ln x))
+                  (= lines [""]) [] ;;couldn't find a nice way to express this
+                  (>= y (dec (count lines))) lines
+                  :else (vec (concat
+                              (subvec lines 0 y)
+                              [(str (get lines y)
+                                    (get lines (inc y)))]
+                              (subvec lines (min (+ 2 y)) (count lines))
+                              ))
+                  )))))))
+
+(with-test #'delete-forward
+  (letfn [(impl [before-lines pos]
+            (-> {:lines before-lines}
+                (delete-forward pos)
+                :lines))]
+    
+    (is= (impl ["abc"] (->Pos 0 0)) ["bc"])
+    (is= (impl ["abc"] (->Pos 1 0)) ["ac"])
+    (is= (impl ["abc"] (->Pos 2 0)) ["ab"])
+    (is= (impl ["abc"] (->Pos 3 0)) ["abc"])
+
+    (is= (impl ["abc" "de"] (->Pos 3 0)) ["abcde"])
+    (is= (impl ["abc" "de" "fg"] (->Pos 3 0)) ["abcde" "fg"])
+    
+    (is= (impl ["abc" "de" "fg"] (->Pos 2 1)) ["abc" "defg"])
+    
+    (is= (impl ["abc"] (->Pos 0 1)) ["abc"])
+    (is= (impl ["abc" ""] (->Pos 3 0)) ["abc"])
+    (is= (impl ["abc" "a"] (->Pos 3 0)) ["abca"])
+    
+    (is= (impl [""] (->Pos 0 0)) [])
+    (is= (impl [""] (->Pos 0 1)) [""])
+    (is= (impl [] (->Pos 0 0)) [])
+    ))
+
+(def ^:buffer delete-char
+  "Delete the character at `pos`.
+  If `pos` is unspecified, the character at `:cursor-pos` is removed.
+
+  An alias for `delete-forward`"
+  delete-forward)
+
+(defn-buffer delete-backward
+  "Delete the character after the cursor (ie `:cursor-pos`)."
+  ([buffer]
+   (cond
+     (= (:cursor-pos buffer) (->Pos 0 0)) buffer
+     ;; (>= (-> buffer :cursor-pos :y) (-> buffer :lines count)) (backward-char buffer)
+     :else (-> buffer
+               backward-char
+               delete-forward))))
+
+(with-test #'delete-backward
+  (letfn [(impl [lines pos]
+            (-> {:lines lines, :cursor-pos pos}
+                delete-backward))]
+    
+    (is= (impl ["abc"] (->Pos 0 0))
+         {:lines ["abc"], :cursor-pos (->Pos 0 0)})
+    (is= (impl ["abc"] (->Pos 1 0))
+         {:lines ["bc"], :cursor-pos (->Pos 0 0)})
+    
+    (is= (impl ["abc"] (->Pos 2 0))
+         {:lines ["ac"], :cursor-pos (->Pos 1 0)})
+    (is= (impl ["abc"] (->Pos 3 0))
+         {:lines ["ab"], :cursor-pos (->Pos 2 0)})
+    (is= (impl ["abc"] (->Pos 4 0))
+         {:lines ["ab"], :cursor-pos (->Pos 2 0)})
+    
+    (is= (impl ["abc" "de"] (->Pos 0 1))
+         {:lines ["abcde"], :cursor-pos (->Pos 3 0)})
+    (is= (impl ["abc" "de" "fg"] (->Pos 2 1))
+         {:lines ["abc" "d" "fg"], :cursor-pos (->Pos 1 1)})
+    
+    (is= (impl ["abc"] (->Pos 0 1))
+         {:lines ["abc"], :cursor-pos (->Pos 3 0)})
+    (is= (impl ["abc" ""] (->Pos 0 1))
+         {:lines ["abc"], :cursor-pos (->Pos 3 0)})
+
+    (is= (impl ["abc"] (->Pos 0 1))
+         {:lines ["abc"], :cursor-pos (->Pos 3 0)})
+    
+    (is= (impl [""] (->Pos 0 1))
+         {:lines [], :cursor-pos (->Pos 0 0)})
+    (is= (impl [""] (->Pos 0 0))
+         {:lines [""], :cursor-pos (->Pos 0 0)})
+    (is= (impl [] (->Pos 0 0))
+         {:lines [], :cursor-pos (->Pos 0 0)})
+    ))
+
+;; TODO tests
+
 
 
 ;; buffer {
@@ -216,6 +451,8 @@
 
 ;;TODO move me
 ;; colortest o
+
+;; TODO xft:Code2003, xft:Symbola
 (def editor-options {:line-wrap? false
                      :line-numbers? true ;TODO
                      :cursor-type :block                    ;or line
@@ -374,35 +611,42 @@
        ))))
 
 
+;; TODO proper unicode
+;; TODO multi fonts
 (defn create-text-buffer
   "Create a text buffer.
-   Only for internal usage."
-  []
-  (letfn [(on-paint [buffer]
-            (let [canvas (:component buffer)
-                  ^BufferStrategy bs (.getBufferStrategy canvas)
-                  ^Graphics g (.getDrawGraphics bs)]
-              (draw-text-buffer! canvas g buffer)
-              (.show bs)))
+   For internal usage."
+  ([] (create-text-buffer ["abc", "Hello, world!", "█" "何",
+                           "0a\u0308"   ;ä, but with 2 unicode points
+                           ]))
+  ([lines]
+   (letfn [(on-paint [buffer]
+             (let [canvas (:component buffer)
+                   ^BufferStrategy bs (.getBufferStrategy canvas)
+                   ^Graphics g (.getDrawGraphics bs)]
+               (draw-text-buffer! canvas g buffer)
+               (.show bs)))
 
-          (on-component-added [buffer]
-            (doto (:component buffer)
-              (.createBufferStrategy 2);; double buffering
-              ))]
-    (let [buffer (create-buffer :type :text
+           (on-component-added [buffer]
+             (doto (:component buffer)
+               (.createBufferStrategy 2);; double buffering
+               ))]
+     (let [buffer (create-buffer
+                   :type :text
                    :component (proxy [Canvas] []
                                 (paint [g]
-                                  ;;TODO do some proper drawing here
+                                  ;;TODO do some proper drawing here?
                                   ;; (proxy-super g)
                                   (println "!!og paint"))
-                                  )
+                                )
                    :on-paint on-paint
                    :on-component-added on-component-added
-                   :lines ["abc", "Hello, world!", "█何"]
+
+                   :line-separator "\n"
+                   :lines lines
                    :cursor-pos (->Pos 1 1)
                    )
-          ]
-      ;; (:component buffer)
+           ]
+       buffer)
+     )))
 
-      buffer)
-    ))

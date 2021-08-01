@@ -40,13 +40,22 @@
 
 (defn update-current-buffer!
   "TODO what if we have more buffers
-  f : buffer -> buffer"
+   f : buffer, args... -> buffer"
   ([f]
-   ;; (print "update! ")
-   ;; (clojure.pprint/pprint  @the-state)
    (swap! the-state #(update % :current-buffer f))
    (repaint-buffer!))
-  ;TODO [f & rest]
+
+  ([f args]
+   ;; (print "update! ")
+   ;; (clojure.pprint/pprint @the-state)
+   
+   (swap! the-state #(assoc % :current-buffer
+                      (apply f (get % :current-buffer) args)))
+   (repaint-buffer!)
+   
+   ;; (print "post-update! ")
+   ;; (clojure.pprint/pprint @the-state)
+   )
   )
 
 
@@ -57,7 +66,20 @@
   [name & decls]
   (list* `defn (with-meta name (assoc (meta name) :buffer true)) decls))
 
-(defn call-interactively
+(defmacro fn-buffer
+  "Use this to define anonymus interactive functions that have the first arg `buffer`.
+  The function must return a buffer (ie use functions like `assoc` on the buffer)
+
+  See `defn-buffer`
+  "
+  [& decls]
+  (let [res (list* `fn decls)]
+    ;; `(with-meta ~res (assoc (meta ~res) :buffer true))
+    `(with-meta ~res {:buffer true})
+    ))
+
+
+(defn call-interactively!
   "Call the function `f` with the args, providing the current buffer if needed.
 
   If the function was defined with `defn-buffer` the current buffer is passed as a param.
@@ -68,10 +90,14 @@
   (call-interactively #'forward-char)
   ```
   "
-  ([f] (if (:buffer (meta f))
-         (update-current-buffer! f)
-         (f)))
-  ;;TODO f & args
+  ([f]
+   (if (:buffer (meta f))
+     (update-current-buffer! f)
+     (f)))
+  ([f & args]
+   (if (:buffer (meta f))
+     (update-current-buffer! f args)
+     (apply f args)))
   )
 
 (def the-gui (atom nil))

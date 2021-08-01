@@ -71,3 +71,45 @@
 
   ;; (is= (clamp 6 2 4) 8)
   )
+
+(defn str-insert
+  "Insert c in string s at index i."
+  [s c i]
+  (str (subs s 0 i) c (subs s i)))
+
+(with-test #'str-insert
+  (is= (str-insert "" \a 0 ) "a")
+  (is= (str-insert "bc" \a 0) "abc")
+  (is= (str-insert "bc" \a 2) "bca")
+  (is= (str-insert "bc" \a 1) "bac")
+  ;; (is= (clamp 6 2 4) 8)
+  )
+
+(defn str-remove
+  "Remove the `i`-th character in `s`."
+  [s i]
+  (str (subs s 0 i) (subs s (inc i))))
+
+(with-test #'str-remove
+  (is= (str-remove "abc" 0) "bc")
+  (is= (str-remove "abc" 1) "ac")
+  (is= (str-remove "abc" 2) "ab")
+  (is= (str-remove "a" 0) "")
+  )
+
+(defmacro t->
+  "Threads the expr through the forms. Inserts x as the second item
+   in the first form, making a list of it if it is a lambda or not a
+   list already. If there are more forms, inserts the first form as the
+   second item in second form, etc.
+
+  `->` that works with lambdas"
+  [x & forms]
+  (loop [x x, forms forms]
+    (if forms
+      (let [form (first forms)
+            threaded (if (and (seq? form) (not (#{'fn 'fn*} (first form))))
+                       (with-meta `(~(first form) ~x ~@(next form)) (meta form))
+                       (list form x))]
+        (recur threaded (next forms)))
+      x)))
